@@ -3,10 +3,8 @@ import argparse
 import shutil
 import datetime
 
-# source_dir = os.path.expanduser("/Users/mbbroberg/Local/PARA Vault/.obsidian/plugins/")
-# home_dir = os.path.expanduser("~/obsidian/")
-# ignoring omnivore bc it stores the API key as plaintext :facepalm:
-ignore_list = ("update-time-on-edit", "obsidian-omnivore")
+# ignoring plugins that store API key as plaintext :facepalm:
+ignore_list = ("update-time-on-edit", "obsidian-omnivore", "digitalgarden")
 
 # When you should pause and start fresh
 # Not willing to be fully destructive and delete
