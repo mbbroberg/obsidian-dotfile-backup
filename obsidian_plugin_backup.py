@@ -45,14 +45,14 @@ def check_hard_link(src_path, dest_path):
         return False
 
 def create_hard_links(source_dir, destination_dir, ignore_list):
-    for destination_dir, dirs, files in os.walk(source_dir):
+    for dirpath, dirs, files in os.walk(source_dir):
         # Skip directories in ignore_list
         dirs[:] = [d for d in dirs if d not in ignore_list]
         for file in files:
             if file == "data.json":
-                src_path = os.path.join(destination_dir, file)
-                relative_path = os.path.relpath(destination_dir, source_dir)
-                dest_dir = os.path.join(home_dir, relative_path)
+                src_path = os.path.join(dirpath, file)  # Use dirpath instead of destination_dir
+                relative_path = os.path.relpath(dirpath, source_dir)
+                dest_dir = os.path.join(destination_dir, relative_path)  # Use destination_dir instead of source_dir
                 try:
                     os.makedirs(dest_dir, exist_ok=True)
                     dest_path = os.path.join(dest_dir, file)
