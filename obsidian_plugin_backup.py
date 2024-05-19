@@ -15,8 +15,8 @@ def archive_destination(destination_dir):
     shutil.make_archive(archive_path, 'zip', destination_dir)
 
 def compare_directories(source_dir, home_dir, ignore_list):
-    source_dirs = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d)) and d not in ignore_list])
-    home_dirs = sorted([d for d in os.listdir(home_dir) if os.path.isdir(os.path.join(home_dir, d)) and d not in ignore_list])
+    source_dirs = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d)) and d not in ignore_list and os.path.isfile(os.path.join(source_dir, d, 'data.json'))])
+    home_dirs = sorted([d for d in os.listdir(home_dir) if os.path.isdir(os.path.join(home_dir, d)) and d not in ignore_list and os.path.isfile(os.path.join(home_dir, d, 'data.json'))])
 
     all_dirs = sorted(set(source_dirs + home_dirs))
 
@@ -32,6 +32,9 @@ def compare_directories(source_dir, home_dir, ignore_list):
             home_dir = '*' + home_dir + '*' if home_dir.strip() else ' '
 
         print(f"{source_dir:<30} | {home_dir:<30}")
+
+    if source_dirs == home_dirs:
+        print("\nCongratulations! All relevant folders with data.json in them are in both locations.")
 
 def check_hard_link(src_path, dest_path):
     try:
