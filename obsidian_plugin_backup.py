@@ -4,7 +4,7 @@ import shutil
 import datetime
 
 # ignoring plugins that store API key as plaintext :facepalm:
-ignore_list = ("update-time-on-edit", "obsidian-omnivore", "digitalgarden")
+ignore_list = ("update-time-on-edit", "obsidian-omnivore", "digitalgarden", "node_modules")
 
 # When you should pause and start fresh
 # Not willing to be fully destructive and delete
@@ -14,9 +14,9 @@ def archive_destination(destination_dir):
     archive_path = os.path.join(destination_dir, archive_dir)
     shutil.make_archive(archive_path, 'zip', destination_dir)
 
-def compare_directories(source_dir, home_dir):
-    source_dirs = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d))])
-    home_dirs = sorted([d for d in os.listdir(home_dir) if os.path.isdir(os.path.join(home_dir, d))])
+def compare_directories(source_dir, home_dir, ignore_list):
+    source_dirs = sorted([d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d)) and d not in ignore_list])
+    home_dirs = sorted([d for d in os.listdir(home_dir) if os.path.isdir(os.path.join(home_dir, d)) and d not in ignore_list])
 
     all_dirs = sorted(set(source_dirs + home_dirs))
 
@@ -75,7 +75,7 @@ def main():
     args = parser.parse_args()
 
     if args.compare:
-        compare_directories(args.source, args.destination)
+        compare_directories(args.source, args.destination, ignore_list)
     elif args.link:
         create_hard_links(args.source, args.destination, ignore_list)
     elif args.archive:
