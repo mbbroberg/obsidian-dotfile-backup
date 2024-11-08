@@ -2,12 +2,79 @@ import os
 import argparse
 import shutil
 import datetime
+import glob
 
 # ignoring plugins that store API key as plaintext :facepalm:
 ignore_list = ("update-time-on-edit", "obsidian-omnivore", "digitalgarden", "node_modules")
+# additional files without .json extension
+file_list = ("config")
 
-# When you should pause and start fresh
-# Not willing to be fully destructive and delete
+def find_files_to_link(source_dir, patterns):
+    """Find all files matching the given patterns"""
+    matched_files = []
+    for pattern in patterns:
+        pattern_path = os.path.join(source_dir, f"**/{pattern}")
+        matched_files.extend(glob.glob(pattern_path, recursive=True))
+    return matched_files
+
+def create_single_hard_link(src_path, dest_path):
+    """Create a single hard link and verify its creation"""
+    try:
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        if not os.path.exists(dest_path):
+            os.link(src_path, dest_path)
+            if check_hard_link(src_path, dest_path):
+                print(f"Hard link created successfully: {dest_path}")
+                return True
+        else:
+            print(f"File already exists, skipping: {dest_path}")
+    except OSError as e:
+        print(f"Error creating hard link: {e}")
+    return False
+
+def link_plugin_data(source_dir, destination_dir, ignore_list):
+    """Handle plugin data.json files"""
+    for dirpath, dirs, files in os.walk(source_dir):
+        dirs[:] = [d for d in dirs if d not in ignore_list]
+        for file in files:
+            if file == "data.json":
+                src_path = os.path.join(dirpath, file)
+                relative_path = os.path.relpath(dirpath, source_dir)
+                dest_path = os.path.join(destination_dir, relative_path, file)
+                create_single_hard_link(src_path, dest_path)
+
+def link_config_files(source_dir, destination_dir, file_list):
+    """Handle config and other specified files"""
+    # Link all JSON files
+    json_files = find_files_to_link(source_dir, ["*.json"])
+    for src_path in json_files:
+        if not any(ignore in src_path for ignore in ignore_list):
+            relative_path = os.path.relpath(src_path, source_dir)
+            dest_path = os.path.join(destination_dir, relative_path)
+            create_single_hard_link(src_path, dest_path)
+
+    # Link specified config files
+    config_files = find_files_to_link(source_dir, file_list)
+    for src_path in config_files:
+        relative_path = os.path.relpath(src_path, source_dir)
+        dest_path = os.path.join(destination_dir, relative_path)
+        create_single_hard_link(src_path, dest_path)
+
+def create_hard_links(source_dir, destination_dir, ignore_list):
+    """Main function to create all hard links"""
+    link_plugin_data(source_dir, destination_dir, ignore_list)
+    link_config_files(source_dir, destination_dir, file_list)
+
+# Keep existing functions
+def check_hard_link(src_path, dest_path):
+    try:
+        src_inode = os.stat(src_path).st_ino
+        dest_inode = os.stat(dest_path).st_ino
+        return src_inode == dest_inode
+    except OSError as e:
+        print(f"Error checking hard link: {e}")
+        return False
+
 def archive_destination(destination_dir):
     date_str = datetime.datetime.now().strftime('%Y-%m-%d')
     archive_dir = "_archive-" + date_str
@@ -35,38 +102,6 @@ def compare_directories(source_dir, home_dir, ignore_list):
 
     if source_dirs == home_dirs:
         print("\nCongratulations! All relevant folders with data.json in them are in both locations.")
-
-def check_hard_link(src_path, dest_path):
-    try:
-        src_inode = os.stat(src_path).st_ino
-        dest_inode = os.stat(dest_path).st_ino
-        return src_inode == dest_inode
-    except OSError as e:
-        print(f"Error checking hard link: {e}")
-        return False
-
-def create_hard_links(source_dir, destination_dir, ignore_list):
-    for dirpath, dirs, files in os.walk(source_dir):
-        # Skip directories in ignore_list
-        dirs[:] = [d for d in dirs if d not in ignore_list]
-        for file in files:
-            if file == "data.json":
-                src_path = os.path.join(dirpath, file)  # Use dirpath instead of destination_dir
-                relative_path = os.path.relpath(dirpath, source_dir)
-                dest_dir = os.path.join(destination_dir, relative_path)  # Use destination_dir instead of source_dir
-                try:
-                    os.makedirs(dest_dir, exist_ok=True)
-                    dest_path = os.path.join(dest_dir, file)
-                    if not os.path.exists(dest_path):
-                        os.link(src_path, dest_path)
-                        if check_hard_link(src_path, dest_path):
-                            print(f"Hard link created successfully: {dest_path}")
-                        else:
-                            print(f"Failed to create hard link: {dest_path}")
-                    else:
-                        print(f"File already exists, skipping: {dest_path}")
-                except OSError as e:
-                    print(f"Error creating hard link: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description='Manage your Obsidian dotfiles by hardlinking them to root, then backing them up however you prefer.')
