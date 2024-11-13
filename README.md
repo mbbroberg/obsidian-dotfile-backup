@@ -74,4 +74,4 @@ tail -f ~/obsidian/backup-error.log ~/obsidian/backup-output.log
 
 ## Acknowledgement 
 
-I only had the patience and time to put this together because I used [GitHub Copilot](https://github.com/features/copilot) at first and [Cody with Claude](https://marketplace.visualstudio.com/items?itemName=sourcegraph.cody-ai) at other times. I want to thank everyone who's contributed code helped me navigate this problem. 
+I only had the patience and time to put this together because I used [GitHub Copilot](https://github.com/features/copilot) at first and [Cody with Claude](https://marketplace.visualstudio.com/items?itemName=sourcegraph.cody-ai) at other times. I want to thank everyone whose contributed code helped me navigate this problem. 
