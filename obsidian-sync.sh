@@ -1,167 +1,258 @@
 #!/bin/bash
-# obsidian-sync.sh - Sync Obsidian config between machines
+# obsidian-sync.sh - Copy Obsidian configuration between machines
 
-# Check for config file and load it, or use defaults
+# Local configuration file
 CONFIG_FILE="$HOME/obsidian-config/local-config"
+
+# Check if config file exists and load it
 if [ -f "$CONFIG_FILE" ]; then
   source "$CONFIG_FILE"
+  echo "Loaded configuration from $CONFIG_FILE"
 else
-  # Default configuration
-  REPO_DIR="$HOME/obsidian-config"
-  VAULT_DIR="$HOME/path/to/your/vault/.obsidian"
-  REMOTE_URL="git@github.com:yourusername/obsidian-config.git"
-  SKIP_PLUGINS="api-key-plugin token-based-plugin update-time-on-edit"
-  SKIP_FILES="manifest.json workspace.json"
-  
-  # Create config file for future runs
+  # First run - create config file and prompt for values
   mkdir -p "$(dirname "$CONFIG_FILE")"
-  cat > "$CONFIG_FILE" << EOF
-# Local configuration - not synced with git
-REPO_DIR="$REPO_DIR"
-VAULT_DIR="$VAULT_DIR"
-REMOTE_URL="$REMOTE_URL"
-SKIP_PLUGINS="$SKIP_PLUGINS"
-SKIP_FILES="$SKIP_FILES"
-EOF
   
-  echo "Created local config at $CONFIG_FILE - edit this file to set your paths"
-  exit 1
+  # Get vault directory
+  DEFAULT_VAULT_DIR="$HOME/Documents/ObsidianVault/.obsidian"
+  echo -n "Enter your Obsidian vault's .obsidian directory [$DEFAULT_VAULT_DIR]: "
+  read -r input_vault
+  VAULT_DIR=${input_vault:-$DEFAULT_VAULT_DIR}
+  
+  # Get repo directory
+  DEFAULT_REPO_DIR="$HOME/obsidian-config"
+  echo -n "Enter directory to store synced config [$DEFAULT_REPO_DIR]: "
+  read -r input_repo
+  REPO_DIR=${input_repo:-$DEFAULT_REPO_DIR}
+  
+  # Get git URL if desired
+  echo -n "Enter git repository URL (leave empty to skip git sync): "
+  read -r REMOTE_URL
+  
+  # Default skip lists
+  DEFAULT_SKIP_PLUGINS="api-key-plugin token-based-plugin update-time-on-edit workspaces-plus"
+  DEFAULT_SKIP_FILES="manifest.json workspace.json workspaces.json"
+  
+  # Create config file
+  cat > "$CONFIG_FILE" << EOF
+# Local configuration for Obsidian config sync - created $(date)
+VAULT_DIR="$VAULT_DIR"
+REPO_DIR="$REPO_DIR"
+REMOTE_URL="$REMOTE_URL"
+SKIP_PLUGINS="$DEFAULT_SKIP_PLUGINS"
+SKIP_FILES="$DEFAULT_SKIP_FILES"
+EOF
+
+  echo "Created configuration at $CONFIG_FILE"
+  echo "Edit this file to customize which plugins and files to skip"
+  echo "Run the script again to perform the initial sync"
+  exit 0
 fi
 
 # Convert space-separated strings to arrays
 read -ra SKIP_PLUGINS_ARR <<< "$SKIP_PLUGINS"
 read -ra SKIP_FILES_ARR <<< "$SKIP_FILES"
 
-# Helper functions
-log() { echo "[$(date '+%H:%M:%S')] $1"; }
+# ======== Helper Functions ========
+log() { 
+  echo "[$(date '+%H:%M:%S')] $1"
+}
 
-# Setup repo
-if [ ! -d "$REPO_DIR/.git" ]; then
-  mkdir -p "$REPO_DIR"
-  cd "$REPO_DIR" || exit 1
-  git init
+error() { 
+  echo "[ERROR] $1" >&2
+  exit 1
+}
+
+# ======== Repository Setup ========
+setup_repo() {
+  # Create repo directory if it doesn't exist
+  if [ ! -d "$REPO_DIR" ]; then
+    log "Creating repository directory at $REPO_DIR"
+    mkdir -p "$REPO_DIR"
+  fi
   
-  if [ -n "$REMOTE_URL" ]; then
+  # Initialize git if URL was provided and repo isn't already a git repo
+  if [ -n "$REMOTE_URL" ] && [ ! -d "$REPO_DIR/.git" ]; then
+    log "Initializing git repository"
+    cd "$REPO_DIR" || error "Failed to change to repo directory"
+    git init
     git remote add origin "$REMOTE_URL"
-    git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || echo "# Obsidian Config" > README.md
-    git add README.md
-    git commit -m "Initial commit" 2>/dev/null
+    
+    # Try to pull from remote
+    if git ls-remote --exit-code origin &>/dev/null; then
+      log "Pulling from remote repository"
+      git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || log "No existing branch found"
+    else
+      log "Remote not accessible or empty. Creating initial commit."
+      echo "# Obsidian Configuration" > README.md
+      git add README.md
+      git commit -m "Initial commit"
+    fi
+    
+    # Add local-config to gitignore
+    if [ ! -f "$REPO_DIR/.gitignore" ] || ! grep -q "local-config" "$REPO_DIR/.gitignore"; then
+      echo "local-config" >> "$REPO_DIR/.gitignore"
+      git add .gitignore
+      git commit -m "Add local-config to gitignore" 2>/dev/null
+    fi
   fi
-fi
+  
+  # Create subdirectories
+  mkdir -p "$REPO_DIR/plugins"
+}
 
-# Create needed directories
-mkdir -p "$REPO_DIR/plugins"
-
-# Sync core configs
-for config in "$VAULT_DIR"/*.json; do
-  if [ -f "$config" ]; then
-    filename=$(basename "$config")
+# ======== Sync Functions ========
+copy_core_configs() {
+  log "Copying core configuration files"
+  
+  # Copy core JSON files from vault to repo
+  find "$VAULT_DIR" -maxdepth 1 -name "*.json" | while read -r file; do
+    filename=$(basename "$file")
     
     # Skip files in skip list
     if [[ " ${SKIP_FILES_ARR[*]} " == *" $filename "* ]]; then
+      log "Skipping file: $filename"
       continue
     fi
     
-    if [ ! -f "$REPO_DIR/$filename" ] || ! cmp -s "$config" "$REPO_DIR/$filename"; then
+    # Only copy if different
+    if [ ! -f "$REPO_DIR/$filename" ] || ! cmp -s "$file" "$REPO_DIR/$filename"; then
       log "Copying $filename to repo"
-      cp "$config" "$REPO_DIR/$filename"
+      cp "$file" "$REPO_DIR/$filename"
     fi
-  fi
-done
+  done
+}
 
-# Sync plugin configs
-find "$VAULT_DIR/plugins" -name "data.json" | while read -r file; do
-  plugin=$(basename "$(dirname "$file")")
+copy_plugin_configs() {
+  log "Copying plugin configurations"
   
-  # Skip plugins in skip list
-  if [[ " ${SKIP_PLUGINS_ARR[*]} " == *" $plugin "* ]]; then
-    continue
-  fi
-  
-  mkdir -p "$REPO_DIR/plugins/$plugin"
-  
-  if [ ! -f "$REPO_DIR/plugins/$plugin/data.json" ] || ! cmp -s "$file" "$REPO_DIR/plugins/$plugin/data.json"; then
-    log "Copying config for plugin: $plugin"
-    cp "$file" "$REPO_DIR/plugins/$plugin/data.json"
-  fi
-done
-
-# Create symlinks
-for config in "$REPO_DIR"/*.json; do
-  if [ -f "$config" ]; then
-    filename=$(basename "$config")
+  # Find all plugin data.json files in the vault
+  find "$VAULT_DIR/plugins" -name "data.json" 2>/dev/null | while read -r file; do
+    plugin_dir=$(dirname "$file")
+    plugin_name=$(basename "$plugin_dir")
     
-    # Skip files in skip list
-    if [[ " ${SKIP_FILES_ARR[*]} " == *" $filename "* ]]; then
+    # Skip plugins in skip list
+    if [[ " ${SKIP_PLUGINS_ARR[*]} " == *" $plugin_name "* ]]; then
+      log "Skipping plugin: $plugin_name"
       continue
     fi
     
-    # Backup existing file if needed
-    if [ -f "$VAULT_DIR/$filename" ] && [ ! -L "$VAULT_DIR/$filename" ]; then
-      log "Backing up $filename"
-      mv "$VAULT_DIR/$filename" "$VAULT_DIR/$filename.bak"
-    elif [ -L "$VAULT_DIR/$filename" ] && [ "$(readlink "$VAULT_DIR/$filename")" != "$config" ]; then
-      rm "$VAULT_DIR/$filename"
-    fi
+    # Create plugin directory in repo
+    mkdir -p "$REPO_DIR/plugins/$plugin_name"
     
-    # Create symlink
-    if [ ! -L "$VAULT_DIR/$filename" ]; then
-      log "Creating symlink for $filename"
-      ln -sf "$config" "$VAULT_DIR/$filename"
+    # Copy config file if it's different
+    if [ ! -f "$REPO_DIR/plugins/$plugin_name/data.json" ] || ! cmp -s "$file" "$REPO_DIR/plugins/$plugin_name/data.json"; then
+      log "Copying config for plugin: $plugin_name"
+      cp "$file" "$REPO_DIR/plugins/$plugin_name/data.json"
     fi
+  done
+}
+
+apply_configs_to_vault() {
+  log "Applying configs from repo to vault"
+  
+  # Apply core configs
+  for config in "$REPO_DIR"/*.json; do
+    if [ -f "$config" ]; then
+      filename=$(basename "$config")
+      
+      # Skip files in skip list
+      if [[ " ${SKIP_FILES_ARR[*]} " == *" $filename "* ]]; then
+        continue
+      fi
+      
+      # Copy file to vault 
+      if [ ! -f "$VAULT_DIR/$filename" ] || ! cmp -s "$config" "$VAULT_DIR/$filename"; then
+        log "Applying $filename to vault"
+        # Backup existing file if different
+        if [ -f "$VAULT_DIR/$filename" ]; then
+          cp "$VAULT_DIR/$filename" "$VAULT_DIR/$filename.bak.$(date +%Y%m%d%H%M%S)"
+        fi
+        cp "$config" "$VAULT_DIR/$filename"
+      fi
+    fi
+  done
+  
+  # Apply plugin configs
+  for plugin_dir in "$REPO_DIR/plugins"/*; do
+    if [ -d "$plugin_dir" ] && [ -f "$plugin_dir/data.json" ]; then
+      plugin_name=$(basename "$plugin_dir")
+      
+      # Skip plugins in skip list
+      if [[ " ${SKIP_PLUGINS_ARR[*]} " == *" $plugin_name "* ]]; then
+        continue
+      fi
+      
+      # Ensure plugin directory exists in vault
+      mkdir -p "$VAULT_DIR/plugins/$plugin_name"
+      
+      # Copy config file if different
+      if [ ! -f "$VAULT_DIR/plugins/$plugin_name/data.json" ] || ! cmp -s "$plugin_dir/data.json" "$VAULT_DIR/plugins/$plugin_name/data.json"; then
+        log "Applying config for plugin: $plugin_name"
+        # Backup existing file if different
+        if [ -f "$VAULT_DIR/plugins/$plugin_name/data.json" ]; then
+          cp "$VAULT_DIR/plugins/$plugin_name/data.json" "$VAULT_DIR/plugins/$plugin_name/data.json.bak.$(date +%Y%m%d%H%M%S)"
+        fi
+        cp "$plugin_dir/data.json" "$VAULT_DIR/plugins/$plugin_name/data.json"
+      fi
+    fi
+  done
+}
+
+git_sync() {
+  if [ -z "$REMOTE_URL" ]; then
+    log "No remote URL configured, skipping git sync"
+    return
   fi
-done
-
-# Create plugin symlinks
-find "$REPO_DIR/plugins" -name "data.json" | while read -r file; do
-  plugin=$(basename "$(dirname "$file")")
-  target_dir="$VAULT_DIR/plugins/$plugin"
   
-  # Skip plugins in skip list
-  if [[ " ${SKIP_PLUGINS_ARR[*]} " == *" $plugin "* ]]; then
-    continue
-  fi
+  log "Syncing with git repository"
   
-  mkdir -p "$target_dir"
+  cd "$REPO_DIR" || error "Failed to change to repo directory"
   
-  # Backup existing file if needed
-  if [ -f "$target_dir/data.json" ] && [ ! -L "$target_dir/data.json" ]; then
-    log "Backing up plugin config for $plugin"
-    mv "$target_dir/data.json" "$target_dir/data.json.bak"
-  elif [ -L "$target_dir/data.json" ] && [ "$(readlink "$target_dir/data.json")" != "$file" ]; then
-    rm "$target_dir/data.json"
-  fi
-  
-  # Create symlink
-  if [ ! -L "$target_dir/data.json" ]; then
-    log "Creating symlink for plugin $plugin"
-    ln -sf "$file" "$target_dir/data.json"
-  fi
-done
-
-# Git sync
-cd "$REPO_DIR" || exit 1
-
-# Add gitignore for local config if it doesn't exist
-if [ ! -f "$REPO_DIR/.gitignore" ] || ! grep -q "local-config" "$REPO_DIR/.gitignore"; then
-  echo "local-config" >> "$REPO_DIR/.gitignore"
-  git add .gitignore
-  git commit -m "Add local-config to gitignore" 2>/dev/null
-fi
-
-# Pull changes
-if git remote -v | grep -q origin; then
-  git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true
-fi
-
-# Commit and push changes
-if git status --porcelain | grep -q .; then
-  git add .
-  git commit -m "Config sync $(date '+%Y-%m-%d %H:%M:%S')"
-  
+  # Pull changes first
   if git remote -v | grep -q origin; then
-    git push -u origin "$(git rev-parse --abbrev-ref HEAD)" 2>/dev/null || true
+    log "Pulling latest changes"
+    git pull origin "$(git rev-parse --abbrev-ref HEAD)" 2>/dev/null || git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || log "Pull failed, continuing anyway"
   fi
-fi
+  
+  # Commit and push changes
+  if git status --porcelain | grep -q .; then
+    log "Committing changes"
+    git add .
+    git commit -m "Config sync $(date '+%Y-%m-%d %H:%M:%S')"
+    
+    if git remote -v | grep -q origin; then
+      log "Pushing changes"
+      git push -u origin "$(git rev-parse --abbrev-ref HEAD)" 2>/dev/null || log "Push failed, check your remote settings"
+    fi
+  else
+    log "No changes to commit"
+  fi
+}
 
-log "Config sync completed"
+# ======== Main Execution ========
+main() {
+  log "Starting Obsidian config sync"
+  
+  # Verify vault directory exists
+  if [ ! -d "$VAULT_DIR" ]; then
+    error "Vault directory not found at $VAULT_DIR. Check VAULT_DIR in $CONFIG_FILE"
+  fi
+  
+  # Setup repository
+  setup_repo
+  
+  # Copy configs FROM vault TO repo
+  copy_core_configs
+  copy_plugin_configs
+  
+  # Copy configs FROM repo TO vault
+  apply_configs_to_vault
+  
+  # Git sync if configured
+  git_sync
+  
+  log "Config sync completed successfully"
+}
+
+# Run the main function
+main
