@@ -34,12 +34,6 @@ read -ra SKIP_FILES_ARR <<< "$SKIP_FILES"
 
 # Helper functions
 log() { echo "[$(date '+%H:%M:%S')] $1"; }
-error() { echo "[ERROR] $1"; exit 1; }
-
-# Verify vault directory exists
-if [ ! -d "$VAULT_DIR" ]; then
-  error "Vault directory not found at $VAULT_DIR. Check VAULT_DIR in $CONFIG_FILE"
-fi
 
 # Setup repo
 if [ ! -d "$REPO_DIR/.git" ]; then
@@ -75,13 +69,8 @@ for config in "$VAULT_DIR"/*.json; do
   fi
 done
 
-# Sync plugin configs - only copy FROM vault TO repo
-# First, find the plugin data files in the vault
-find "$VAULT_DIR/plugins" -name "data.json" 2>/dev/null | while read -r file; do
-  if [ ! -f "$file" ]; then
-    continue
-  fi
-  
+# Sync plugin configs
+find "$VAULT_DIR/plugins" -name "data.json" | while read -r file; do
   plugin=$(basename "$(dirname "$file")")
   
   # Skip plugins in skip list
@@ -93,11 +82,11 @@ find "$VAULT_DIR/plugins" -name "data.json" 2>/dev/null | while read -r file; do
   
   if [ ! -f "$REPO_DIR/plugins/$plugin/data.json" ] || ! cmp -s "$file" "$REPO_DIR/plugins/$plugin/data.json"; then
     log "Copying config for plugin: $plugin"
-    cp "$file" "$REPO_DIR/plugins/$plugin/data.json" || log "Failed to copy $file"
+    cp "$file" "$REPO_DIR/plugins/$plugin/data.json"
   fi
 done
 
-# Create symlinks FOR EXISTING FILES in the repo
+# Create symlinks
 for config in "$REPO_DIR"/*.json; do
   if [ -f "$config" ]; then
     filename=$(basename "$config")
@@ -123,39 +112,35 @@ for config in "$REPO_DIR"/*.json; do
   fi
 done
 
-# Create plugin symlinks ONLY FOR PLUGINS that exist in the vault
-for plugin_dir in "$VAULT_DIR/plugins"/*; do
-  if [ ! -d "$plugin_dir" ]; then
-    continue
-  fi
-  
-  plugin=$(basename "$plugin_dir")
+# Create plugin symlinks
+find "$REPO_DIR/plugins" -name "data.json" | while read -r file; do
+  plugin=$(basename "$(dirname "$file")")
+  target_dir="$VAULT_DIR/plugins/$plugin"
   
   # Skip plugins in skip list
   if [[ " ${SKIP_PLUGINS_ARR[*]} " == *" $plugin "* ]]; then
     continue
   fi
   
-  # Only create symlinks if the plugin exists in both places
-  if [ -d "$REPO_DIR/plugins/$plugin" ] && [ -f "$REPO_DIR/plugins/$plugin/data.json" ]; then
-    # Backup existing file if needed
-    if [ -f "$plugin_dir/data.json" ] && [ ! -L "$plugin_dir/data.json" ]; then
-      log "Backing up plugin config for $plugin"
-      mv "$plugin_dir/data.json" "$plugin_dir/data.json.bak"
-    elif [ -L "$plugin_dir/data.json" ] && [ "$(readlink "$plugin_dir/data.json")" != "$REPO_DIR/plugins/$plugin/data.json" ]; then
-      rm "$plugin_dir/data.json"
-    fi
-    
-    # Create symlink
-    if [ ! -L "$plugin_dir/data.json" ]; then
-      log "Creating symlink for plugin $plugin"
-      ln -sf "$REPO_DIR/plugins/$plugin/data.json" "$plugin_dir/data.json"
-    fi
+  mkdir -p "$target_dir"
+  
+  # Backup existing file if needed
+  if [ -f "$target_dir/data.json" ] && [ ! -L "$target_dir/data.json" ]; then
+    log "Backing up plugin config for $plugin"
+    mv "$target_dir/data.json" "$target_dir/data.json.bak"
+  elif [ -L "$target_dir/data.json" ] && [ "$(readlink "$target_dir/data.json")" != "$file" ]; then
+    rm "$target_dir/data.json"
+  fi
+  
+  # Create symlink
+  if [ ! -L "$target_dir/data.json" ]; then
+    log "Creating symlink for plugin $plugin"
+    ln -sf "$file" "$target_dir/data.json"
   fi
 done
 
 # Git sync
-cd "$REPO_DIR" || error "Failed to change to repo directory"
+cd "$REPO_DIR" || exit 1
 
 # Add gitignore for local config if it doesn't exist
 if [ ! -f "$REPO_DIR/.gitignore" ] || ! grep -q "local-config" "$REPO_DIR/.gitignore"; then
